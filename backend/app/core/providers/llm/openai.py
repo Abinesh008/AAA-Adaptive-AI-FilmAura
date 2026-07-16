@@ -1,0 +1,62 @@
+import asyncio
+from typing import AsyncGenerator
+from openai import OpenAI, AsyncOpenAI
+from app.core.interfaces.llm import BaseLLMProvider
+from app.core.config import settings
+from app.core.logging import get_logger
+
+logger = get_logger("app.providers.llm.openai")
+
+class OpenAILLMProvider(BaseLLMProvider):
+    """
+    OpenAI provider implementing BaseLLMProvider.
+    """
+    def __init__(self, api_key: str | None = None, model: str | None = None):
+        self.api_key = api_key or settings.OPENAI_API_KEY
+        self.model = model or settings.LLM_MODEL
+        
+        # Initialize clients
+        self.client = OpenAI(api_key=self.api_key)
+        self.async_client = AsyncOpenAI(api_key=self.api_key)
+
+    def generate(self, prompt: str, **kwargs) -> str:
+        try:
+            logger.debug(f"Calling OpenAI generate with model={self.model}")
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                **kwargs
+            )
+            return response.choices[0].message.content or ""
+        except Exception as e:
+            logger.error(f"OpenAI generate failed: {e}")
+            raise
+
+    async def generate_async(self, prompt: str, **kwargs) -> str:
+        try:
+            logger.debug(f"Calling OpenAI generate_async with model={self.model}")
+            response = await self.async_client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                **kwargs
+            )
+            return response.choices[0].message.content or ""
+        except Exception as e:
+            logger.error(f"OpenAI generate_async failed: {e}")
+            raise
+
+    async def stream(self, prompt: str, **kwargs) -> AsyncGenerator[str, None]:
+        try:
+            logger.debug(f"Calling OpenAI stream with model={self.model}")
+            response = await self.async_client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                stream=True,
+                **kwargs
+            )
+            async for chunk in response:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+        except Exception as e:
+            logger.error(f"OpenAI stream failed: {e}")
+            raise
