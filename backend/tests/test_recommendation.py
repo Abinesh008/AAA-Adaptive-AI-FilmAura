@@ -148,3 +148,112 @@ def test_profile_learning_rebuild(db_session):
     assert profile is not None
     assert profile.genre_weights["Sci-Fi"] == 1.0
     assert "Christopher Nolan" in profile.favorite_directors
+
+
+from app.recommendation.plugins import plugin_registry
+from app.recommendation.plugins.collaborative import collaborative_plugin
+from app.recommendation.plugins.graph_walk import graph_walk_plugin
+from app.recommendation.interfaces.plugin import BaseRecommendationPlugin
+from app.retrieval.query_trace import QueryTrace
+
+def test_plugin_registry():
+    # Verify auto-discovered plugins
+    plugins = plugin_registry.list_plugins()
+    plugin_names = [p.name for p in plugins]
+    assert "collaborative_filtering" in plugin_names
+    assert "graph_walk" in plugin_names
+    
+    # Custom dummy plugin registration test
+    class DummyPlugin(BaseRecommendationPlugin):
+        @property
+        def name(self) -> str:
+            return "dummy_plugin"
+        async def generate_candidates(self, user_id, limit, db, trace):
+            return [{"movie_id": 9999, "score": 0.5, "provenance_reason": "dummy"}]
+            
+    dummy = DummyPlugin()
+    plugin_registry.register(dummy)
+    assert plugin_registry.get_plugin("dummy_plugin") == dummy
+
+@pytest.mark.asyncio
+async def test_collaborative_plugin_execution(db_session):
+    # Setup similar user tastes mapping
+    # user_cf_1 likes movie 10001
+    # user_cf_2 also likes movie 10001 AND likes movie 10002
+    
+    db_session.add_all([
+        UserInteractionHistory(user_id="user_cf_1", movie_id=10001, interaction_type="bookmark", created_at=datetime.utcnow()),
+        UserInteractionHistory(user_id="user_cf_2", movie_id=10001, interaction_type="bookmark", created_at=datetime.utcnow()),
+        UserInteractionHistory(user_id="user_cf_2", movie_id=10002, interaction_type="rating", rating=5.0, created_at=datetime.utcnow())
+    ])
+    db_session.commit()
+    
+    trace = QueryTrace(session_id="test_cf")
+    candidates = await collaborative_plugin.generate_candidates(
+        user_id="user_cf_1",
+        limit=5,
+        db=db_session,
+        trace=trace
+    )
+    
+    assert len(candidates) >= 1
+    assert candidates[0]["movie_id"] == 10002
+    assert candidates[0]["score"] == 1.0
+    assert "similar watch profiles" in candidates[0]["provenance_reason"]
+
+@pytest.mark.asyncio
+async def test_graph_walk_plugin_execution(db_session):
+    # Create movies sharing the same Sci-Fi genre (id 888)
+    movie_a = Movie(id=101, tmdb_id="10001", title="Sci-Fi Movie A", popularity=50.0, release_year=2020, overview="Sci-Fi A")
+    movie_b = Movie(id=102, tmdb_id="10002", title="Sci-Fi Movie B", popularity=60.0, release_year=2021, overview="Sci-Fi B")
+    genre = db_session.query(Genre).filter(Genre.id == 888).first()
+    if not genre:
+        genre = Genre(id=888, name="Sci-Fi")
+        db_session.add(genre)
+    
+    db_session.add_all([movie_a, movie_b])
+    db_session.commit()
+    
+    movie_a.genres.append(genre)
+    movie_b.genres.append(genre)
+    db_session.commit()
+    
+    # user_gw bookmarks movie_a (10001)
+    db_session.add(UserInteractionHistory(
+        user_id="user_gw",
+        movie_id=10001,
+        interaction_type="bookmark",
+        created_at=datetime.utcnow()
+    ))
+    db_session.commit()
+
+    # Diagnostic prints
+    all_movies = db_session.query(Movie).all()
+    print("\n[DIAGNOSTIC] All Movies:", [(m.id, m.tmdb_id, m.title) for m in all_movies])
+    for m in all_movies:
+        print(f"Movie {m.title} genres: {[g.name for g in m.genres]}")
+    all_genres = db_session.query(Genre).all()
+    print("[DIAGNOSTIC] All Genres:", [(g.id, g.name) for g in all_genres])
+    all_interactions = db_session.query(UserInteractionHistory).all()
+    print("[DIAGNOSTIC] All Interactions:", [(i.user_id, i.movie_id, i.interaction_type) for i in all_interactions])
+    
+    # Query liked movie details matching fallback logic
+    liked_movie_details = db_session.query(Movie).filter(Movie.tmdb_id.in_(["10001"])).all()
+    print("[DIAGNOSTIC] Liked Movie Details matching '10001':", [(m.id, m.title) for m in liked_movie_details])
+
+    trace = QueryTrace(session_id="test_gw")
+    candidates = await graph_walk_plugin.generate_candidates(
+        user_id="user_gw",
+        limit=5,
+        db=db_session,
+        trace=trace
+    )
+    
+    print("[DIAGNOSTIC] Candidates returned:", candidates)
+    
+    assert len(candidates) >= 1
+    candidate_ids = [c["movie_id"] for c in candidates]
+    assert 10002 in candidate_ids
+    
+    cand_10002 = next(c for c in candidates if c["movie_id"] == 10002)
+    assert "shares 1 genres" in cand_10002["provenance_reason"].lower()
