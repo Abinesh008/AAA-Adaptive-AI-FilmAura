@@ -1,6 +1,7 @@
 import pytest
 from datetime import datetime, timedelta
 from sqlalchemy import create_engine
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import sessionmaker
 from app.database.base_class import Base
 from app.models.movie import UserPreferenceProfile, UserInteractionHistory, Movie, Genre, MovieCrew, Person
@@ -8,7 +9,11 @@ from app.recommendation.feature_store import feature_store
 from app.recommendation.profile import profile_learning_engine
 
 # Setup clean, isolated in-memory SQLite database for testing SQLAlchemy tables
-engine = create_engine("sqlite:///:memory:")
+engine = create_engine(
+    "sqlite:///:memory:",
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool
+)
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 @pytest.fixture(scope="module", autouse=True)
@@ -454,3 +459,124 @@ async def test_online_learning_hooks(db_session):
     assert interaction is not None
     assert interaction.interaction_type == "rating"
     assert interaction.rating == 4.5
+
+
+from app.recommendation.model_registry import model_registry
+from app.recommendation.sdk import recommendation_client
+from fastapi.testclient import TestClient
+from app.main import app
+
+def test_model_registry_promotions():
+    # 1. Retrieve default active weights
+    weights = model_registry.get_active_weights()
+    assert weights["w_relevance"] == 0.5
+    
+    # 2. Promote model version
+    model_registry.promote_model("v2.0.0", "production")
+    assert model_registry.active_production_version == "v2.0.0"
+    
+    # 3. Rollback
+    model_registry.rollback_production("v1.0.0")
+    assert model_registry.active_production_version == "v1.0.0"
+
+@pytest.mark.asyncio
+async def test_recommendation_client_sdk(db_session):
+    # Setup user profile & liked genres
+    profile = UserPreferenceProfile(
+        user_id="user_sdk_test",
+        genre_weights={"Sci-Fi": 0.8},
+        favorite_directors=["Christopher Nolan"],
+        favorite_actors=[]
+    )
+    db_session.add(profile)
+    db_session.commit()
+    
+    # Add interaction history so they are not considered cold-start
+    db_session.add(UserInteractionHistory(
+        user_id="user_sdk_test",
+        movie_id=99999,
+        interaction_type="bookmark",
+        created_at=datetime.utcnow()
+    ))
+    db_session.commit()
+    
+    # Force recommendation client run
+    res = await recommendation_client.get_recommendations(
+        user_id="user_sdk_test",
+        limit=5,
+        region="US",
+        subscription_tier="free",
+        is_child_profile=False,
+        db=db_session
+    )
+    
+    assert res["user_id"] == "user_sdk_test"
+    assert "experiment_group" in res
+    assert len(res["recommendations"]) >= 1
+    rec_item = res["recommendations"][0]
+    assert "movie_id" in rec_item
+    assert "explanation" in rec_item
+
+@pytest.mark.asyncio
+async def test_recommendation_client_cold_start(db_session):
+    # Retrieve recommendations for new user without any history
+    res = await recommendation_client.get_recommendations(
+        user_id="new_user_cold_start",
+        limit=5,
+        region="US",
+        subscription_tier="free",
+        is_child_profile=False,
+        db=db_session
+    )
+    
+    assert res["user_id"] == "new_user_cold_start"
+    assert res["experiment_group"] == "cold_start"
+    assert len(res["recommendations"]) >= 1
+
+def test_recommendation_api_endpoints(db_session):
+    # Setup test HTTP client against main FastAPI app and override db dependency
+    from app.api import deps
+    app.dependency_overrides[deps.get_db] = lambda: db_session
+    
+    try:
+        client = TestClient(app)
+        
+        # 1. Test retrieve recommendations
+        response = client.post("/api/v1/recommendations/retrieve?limit=5", headers={"user-id": "user_sdk_test"})
+        assert response.status_code == 200
+        json_data = response.json()
+        assert json_data["user_id"] == "user_sdk_test"
+        assert "recommendations" in json_data
+        
+        # 2. Test submit feedback
+        feedback_payload = {
+            "movie_id": 99999,
+            "interaction_type": "click"
+        }
+        response_fb = client.post(
+            "/api/v1/recommendations/feedback",
+            json=feedback_payload,
+            headers={"user-id": "user_sdk_test"}
+        )
+        assert response_fb.status_code == 204
+        
+        # 3. Test get profile taste coordinates
+        response_prof = client.get("/api/v1/recommendations/profile/user_sdk_test")
+        assert response_prof.status_code == 200
+        assert response_prof.json()["user_id"] == "user_sdk_test"
+        
+        # 4. Test promote model
+        promo_payload = {
+            "model_version": "v1.1.0-beta",
+            "stage": "production"
+        }
+        response_promo = client.post("/api/v1/recommendations/model/promote", json=promo_payload)
+        assert response_promo.status_code == 200
+        assert response_promo.json()["status"] == "success"
+        
+        # 5. Test rollback model
+        response_roll = client.post("/api/v1/recommendations/model/rollback?fallback_version=v1.0.0")
+        assert response_roll.status_code == 200
+        assert response_roll.json()["status"] == "success"
+    finally:
+        app.dependency_overrides.clear()

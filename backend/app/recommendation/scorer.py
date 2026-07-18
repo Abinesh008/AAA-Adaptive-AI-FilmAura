@@ -54,7 +54,11 @@ class MultiStageScorer:
             
             if not movie:
                 # Fallback scores if movie metadata is missing
-                scored_list.append({**candidate, "final_score": base_relevance})
+                scored_list.append({
+                    **candidate,
+                    "final_score": base_relevance,
+                    "genres": candidate.get("genres", [])
+                })
                 continue
 
             # 1. Popularity Score: normalize tmdb popularity [0.0, 1.0]
@@ -119,7 +123,7 @@ class MultiStageScorer:
             
         selected: List[Dict[str, Any]] = [scored_candidates[0]]
         remaining = scored_candidates[1:]
-        selected_genres = set(scored_candidates[0]["genres"])
+        selected_genres = set(scored_candidates[0].get("genres", []))
 
         while len(selected) < limit and remaining:
             best_mmr = -100.0
@@ -127,7 +131,7 @@ class MultiStageScorer:
 
             for cand in remaining:
                 # Calculate maximum similarity overlap with already selected set
-                cand_genres = cand["genres"]
+                cand_genres = cand.get("genres", [])
                 overlap = len(selected_genres.intersection(cand_genres))
                 sim_penalty = overlap / max(1, len(cand_genres))
 
@@ -140,7 +144,7 @@ class MultiStageScorer:
             if best_cand:
                 selected.append(best_cand)
                 remaining.remove(best_cand)
-                selected_genres.update(best_cand["genres"])
+                selected_genres.update(best_cand.get("genres", []))
             else:
                 break
 
