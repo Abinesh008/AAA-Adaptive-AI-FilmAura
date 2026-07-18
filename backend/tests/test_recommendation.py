@@ -257,3 +257,98 @@ async def test_graph_walk_plugin_execution(db_session):
     
     cand_10002 = next(c for c in candidates if c["movie_id"] == 10002)
     assert "shares 1 genres" in cand_10002["provenance_reason"].lower()
+
+
+from app.recommendation.scorer import multi_stage_scorer
+from app.recommendation.policies import policy_chain, AgeContentPolicy, RegionalPolicy, SubscriptionPolicy
+from app.recommendation.guardrails import recommendation_guardrails, FilterBubbleBreaker
+from app.recommendation.explainability import recommendation_explainer
+
+def test_multi_stage_scorer_weights(db_session):
+    # Setup movies with different release years and popularities
+    movie_a = Movie(id=201, tmdb_id="20001", title="Old Unpopular Film", popularity=1.0, release_year=1990, overview="Old")
+    movie_b = Movie(id=202, tmdb_id="20002", title="New Popular Film", popularity=150.0, release_year=2025, overview="New")
+    db_session.add_all([movie_a, movie_b])
+    db_session.commit()
+    
+    candidates = [
+        {"movie_id": 20001, "score": 0.8, "provenance_reason": "test"},
+        {"movie_id": 20002, "score": 0.8, "provenance_reason": "test"}
+    ]
+    
+    user_features = {"genre_weights": {"Sci-Fi": 0.9}}
+    scored = multi_stage_scorer.score_candidates(candidates, user_features, db_session)
+    
+    assert len(scored) == 2
+    # The new popular movie (20002) should have a higher final score due to popularity and freshness boost
+    assert scored[0]["movie_id"] == 20002
+
+def test_diversification_mmr():
+    scored_candidates = [
+        {"movie_id": 1, "final_score": 0.9, "genres": ["Sci-Fi", "Action"]},
+        {"movie_id": 2, "final_score": 0.8, "genres": ["Sci-Fi"]},
+        {"movie_id": 3, "final_score": 0.7, "genres": ["Drama", "Romance"]}
+    ]
+    
+    diversified = multi_stage_scorer.diversify_candidates(scored_candidates, limit=2, lambda_factor=0.5)
+    assert len(diversified) == 2
+    # The second slot should select movie 3 (Drama/Romance) instead of movie 2 (Sci-Fi) due to genre redundancy penalties
+    assert diversified[1]["movie_id"] == 3
+
+def test_policy_chain_filtering():
+    candidates = [
+        {"movie_id": 1, "adult": True, "available_countries": ["US"], "premium_only": False},
+        {"movie_id": 2, "adult": False, "available_countries": ["UK"], "premium_only": False},
+        {"movie_id": 3, "adult": False, "available_countries": ["US"], "premium_only": True}
+    ]
+    
+    # 1. Child profile content filter
+    child_context = {"is_child_profile": True}
+    filtered_age = AgeContentPolicy().filter(candidates, child_context)
+    assert len(filtered_age) == 2
+    assert 1 not in [c["movie_id"] for c in filtered_age]
+
+    # 2. Regional filter
+    uk_context = {"region": "UK"}
+    filtered_region = RegionalPolicy().filter(candidates, uk_context)
+    assert len(filtered_region) == 1
+    assert filtered_region[0]["movie_id"] == 2
+
+    # 3. Subscription filter
+    free_context = {"subscription_tier": "free"}
+    filtered_sub = SubscriptionPolicy().filter(candidates, free_context)
+    assert len(filtered_sub) == 2
+    assert 3 not in [c["movie_id"] for c in filtered_sub]
+
+def test_filter_bubble_breaker():
+    final_list = [
+        {"movie_id": 1, "genres": ["Sci-Fi"], "final_score": 0.9},
+        {"movie_id": 2, "genres": ["Sci-Fi"], "final_score": 0.8}
+    ]
+    all_candidates = [
+        {"movie_id": 1, "genres": ["Sci-Fi"], "final_score": 0.9},
+        {"movie_id": 2, "genres": ["Sci-Fi"], "final_score": 0.8},
+        {"movie_id": 3, "genres": ["Romance"], "final_score": 0.6}
+    ]
+    user_features = {"genre_weights": {"Sci-Fi": 0.9, "Romance": 0.1}}
+    
+    # With exploration ratio=0.5, at least 1 slot should be swapped
+    bubble_breaker = FilterBubbleBreaker(exploration_ratio=0.5)
+    adjusted = bubble_breaker.break_bubble(final_list, all_candidates, user_features)
+    
+    assert len(adjusted) == 2
+    # The lowest ranking slot (index 1) should be replaced by movie 3
+    assert adjusted[1]["movie_id"] == 3
+    assert "exploration" in adjusted[1]["provenance_reason"].lower()
+
+def test_explainer_explanations():
+    candidate_sci_fi = {
+        "movie_id": 20002,
+        "title": "Sci-Fi Film",
+        "genres": ["Sci-Fi"],
+        "provenance_reason": "test"
+    }
+    user_features = {"genre_weights": {"Sci-Fi": 0.8}}
+    
+    expl = recommendation_explainer.generate_explanation(candidate_sci_fi, user_features)
+    assert "enjoy Sci-Fi films" in expl["explanation"]
