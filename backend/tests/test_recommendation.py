@@ -352,3 +352,105 @@ def test_explainer_explanations():
     
     expl = recommendation_explainer.generate_explanation(candidate_sci_fi, user_features)
     assert "enjoy Sci-Fi films" in expl["explanation"]
+
+
+from app.recommendation.cold_start import cold_start_engine
+from app.recommendation.experimentation import experimentation_engine
+from app.recommendation.cache import recommendation_cache
+from app.recommendation.feedback import feedback_pipeline
+from app.recommendation.online_hooks import streaming_feedback_hook
+
+def test_cold_start_engine(db_session):
+    # Setup movies with high popularity and different age certifications
+    movie_kid = Movie(id=301, tmdb_id="30001", title="Kids Animation", popularity=90.0, release_year=2024, overview="G", adult=False)
+    movie_adult = Movie(id=302, tmdb_id="30002", title="Adult Horror", popularity=100.0, release_year=2024, overview="R", adult=True)
+    db_session.add_all([movie_kid, movie_adult])
+    db_session.commit()
+    
+    # 1. Child demographic check -> should filter out Adult Horror (30002)
+    kids_cands = cold_start_engine.get_cold_start_recommendations(limit=5, region="US", age_demographic="child", db=db_session)
+    assert len(kids_cands) >= 1
+    movie_ids = [c["movie_id"] for c in kids_cands]
+    assert 30001 in movie_ids
+    assert 30002 not in movie_ids
+    
+    # 2. Regional filter check -> should return empty if region not licensed (e.g. "FR")
+    fr_cands = cold_start_engine.get_cold_start_recommendations(limit=5, region="FR", age_demographic="adult", db=db_session)
+    assert len(fr_cands) == 0
+
+def test_experimentation_engine():
+    # Test determinism
+    alloc_1 = experimentation_engine.assign_experiment_group("user_test_determinism_abc")
+    alloc_2 = experimentation_engine.assign_experiment_group("user_test_determinism_abc")
+    assert alloc_1["group"] == alloc_2["group"]
+    assert alloc_1["weights"] == alloc_2["weights"]
+    
+    # Test bucket distribution with dummy IDs
+    groups = {experimentation_engine.assign_experiment_group(f"user_{i}")["group"] for i in range(100)}
+    assert "control" in groups
+
+@pytest.mark.asyncio
+async def test_recommendation_cache():
+    user_id = "user_cache_test"
+    payload = [{"movie_id": 99, "score": 0.9}]
+    
+    # 1. Cache item
+    await recommendation_cache.cache_recommendations(user_id, payload)
+    cached = await recommendation_cache.get_cached_recommendations(user_id)
+    assert cached == payload
+    
+    # 2. Invalidate item
+    await recommendation_cache.invalidate_user_cache(user_id)
+    cached_after = await recommendation_cache.get_cached_recommendations(user_id)
+    assert cached_after is None
+
+@pytest.mark.asyncio
+async def test_feedback_pipeline(db_session):
+    user_id = "user_feedback_test"
+    movie_id = 99999
+    
+    # Pre-cache user recommendations
+    await recommendation_cache.cache_recommendations(user_id, [{"movie_id": 12, "score": 0.8}])
+    
+    # Log click
+    await feedback_pipeline.log_interaction(
+        user_id=user_id,
+        movie_id=movie_id,
+        interaction_type="click",
+        rating=None,
+        db=db_session
+    )
+    
+    # Verify interaction is written to db
+    interaction = db_session.query(UserInteractionHistory).filter(
+        UserInteractionHistory.user_id == user_id,
+        UserInteractionHistory.movie_id == movie_id
+    ).first()
+    assert interaction is not None
+    assert interaction.interaction_type == "click"
+    
+    # Verify cache was evicted
+    cached = await recommendation_cache.get_cached_recommendations(user_id)
+    assert cached is None
+
+@pytest.mark.asyncio
+async def test_online_learning_hooks(db_session):
+    event_data = {
+        "user_id": "user_hook_test",
+        "movie_id": 8888,
+        "interaction_type": "rating",
+        "rating": 4.5
+    }
+    
+    # Trigger streaming hook
+    await streaming_feedback_hook.process_stream_event(event_data, db_session)
+    
+    # Verify feedback was recorded in DB
+    interaction = db_session.query(UserInteractionHistory).filter(
+        UserInteractionHistory.user_id == "user_hook_test",
+        UserInteractionHistory.movie_id == 8888
+    ).first()
+    
+    assert interaction is not None
+    assert interaction.interaction_type == "rating"
+    assert interaction.rating == 4.5
