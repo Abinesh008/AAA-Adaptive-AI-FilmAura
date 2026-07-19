@@ -14,14 +14,14 @@ export function useAgent(userId: string, sessionId?: string) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
   const agentMutation = useMutation({
-    mutationFn: (text: string) => agentService.sendMessage(userId, text, sessionId),
+    mutationFn: (text: string) => agentService.sendMessage(text, sessionId || userId),
     onSuccess: (data, variables) => {
       const agentMsg: ChatMessage = {
-        id: `agent-${Date.now()}-${data.trace_id || ""}`,
+        id: `agent-${Date.now()}-${data.data.trace_id || ""}`,
         sender: "agent",
-        text: data.answer,
+        text: data.data.content,
         timestamp: new Date(),
-        suggestedMovies: data.suggested_movies,
+        suggestedMovies: [],
       };
       setMessages((prev) => [...prev, agentMsg]);
     },
