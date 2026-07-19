@@ -1,6 +1,7 @@
 "use client";
 
 import { useRecommendations } from "@/hooks/useRecommendations";
+import { useAuth } from "@/providers/AuthProvider";
 import { LoadingUI } from "@/components/LoadingUI";
 import { ErrorUI } from "@/components/ErrorUI";
 import { 
@@ -15,7 +16,8 @@ import {
 import { useState } from "react";
 
 export default function Home() {
-  const userId = "guest_user";
+  const { user } = useAuth();
+  const userId = user?.id || "guest_user";
   const { 
     recommendations, 
     experimentGroup, 

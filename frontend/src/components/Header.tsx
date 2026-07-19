@@ -2,12 +2,14 @@
 
 import { Menu, Search, Film, Bell } from "lucide-react";
 import Link from "next/link";
+import { useAuth } from "@/providers/AuthProvider";
 
 interface HeaderProps {
   onMenuOpen: () => void;
 }
 
 export function Header({ onMenuOpen }: HeaderProps) {
+  const { user } = useAuth();
   return (
     <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-border bg-[#06070a]/80 backdrop-blur-md px-6">
       
@@ -54,9 +56,12 @@ export function Header({ onMenuOpen }: HeaderProps) {
         </button>
 
         {/* User quick status */}
-        <div className="h-9 w-9 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center font-bold text-primary text-sm cursor-pointer hover:border-primary transition-colors">
-          G
-        </div>
+        <Link 
+          href="/account"
+          className="h-9 w-9 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center font-bold text-primary text-sm cursor-pointer hover:border-primary transition-colors"
+        >
+          {user?.name?.substring(0, 1).toUpperCase() || "G"}
+        </Link>
       </div>
     </header>
   );

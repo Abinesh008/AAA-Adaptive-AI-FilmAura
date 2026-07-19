@@ -12,6 +12,7 @@ import {
   X
 } from "lucide-react";
 import { cn } from "@/utils/cn"; // we will create a simple utils class for className merging
+import { useAuth } from "@/providers/AuthProvider";
 
 interface SidebarProps {
   isOpen: boolean;
@@ -20,6 +21,7 @@ interface SidebarProps {
 
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const pathname = usePathname();
+  const { user } = useAuth();
 
   const navItems = [
     {
@@ -117,15 +119,23 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
 
         {/* Footer/User profile quick links */}
         <div className="p-4 border-t border-border bg-[#06070a]/50">
-          <div className="flex items-center gap-3 px-2 py-1.5">
+          <Link 
+            href="/account"
+            onClick={onClose}
+            className="flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-muted/40 transition-colors"
+          >
             <div className="h-9 w-9 rounded-full bg-secondary/20 border border-secondary/30 flex items-center justify-center font-bold text-secondary text-sm">
-              GU
+              {user?.name?.substring(0, 2).toUpperCase() || "GU"}
             </div>
-            <div className="flex flex-col">
-              <span className="text-xs font-semibold text-foreground">Guest User</span>
-              <span className="text-[10px] text-muted-foreground">Standard Member</span>
+            <div className="flex flex-col text-left">
+              <span className="text-xs font-semibold text-foreground line-clamp-1">
+                {user?.name || "Guest User"}
+              </span>
+              <span className="text-[10px] text-muted-foreground">
+                {user ? "Standard Member" : "Guest Account"}
+              </span>
             </div>
-          </div>
+          </Link>
         </div>
       </aside>
     </>

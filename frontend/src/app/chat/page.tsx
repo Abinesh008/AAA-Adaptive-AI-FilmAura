@@ -1,11 +1,13 @@
 "use client";
 
 import { useAgent } from "@/hooks/useAgent";
+import { useAuth } from "@/providers/AuthProvider";
 import { MessageSquare, Send, Sparkles, User, Tv, Trash2 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 
 export default function ChatPage() {
-  const userId = "guest_user";
+  const { user } = useAuth();
+  const userId = user?.id || "guest_user";
   const { messages, sendMessage, isLoading, clearChat } = useAgent(userId);
   const [input, setInput] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
