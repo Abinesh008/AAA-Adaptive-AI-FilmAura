@@ -2,6 +2,8 @@ import uuid
 import json
 import re
 from typing import Dict, Any, Optional
+import time
+from app.core.metrics import AGENT_LATENCY
 from app.api.deps import get_llm_provider
 from app.agent.prompts import ROUTER_SYSTEM_PROMPT
 from app.agent.memory import conversation_memory
@@ -18,6 +20,7 @@ class AgentCoordinator:
     Coordinator routing user conversations to custom greetings, clarifications, or retrieval plans.
     """
     async def chat(self, query: str, session_id: Optional[str] = None) -> Dict[str, Any]:
+        start_agent_time = time.time()
         s_id = session_id or str(uuid.uuid4())
         logger.info(f"Received agent chat request. Session ID: {s_id}")
         
@@ -33,6 +36,7 @@ class AgentCoordinator:
             conversation_memory.add_message(s_id, "assistant", answer_text)
             trace.record_end("agent_total")
             session_store.save_session(trace)
+            AGENT_LATENCY.observe(time.time() - start_agent_time)
             return {
                 "answer": answer_text,
                 "session_id": s_id,
@@ -106,6 +110,7 @@ class AgentCoordinator:
         # Save trace to session store
         session_store.save_session(trace)
         
+        AGENT_LATENCY.observe(time.time() - start_agent_time)
         return {
             "answer": answer_text,
             "session_id": s_id,

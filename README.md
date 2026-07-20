@@ -77,4 +77,19 @@ uvicorn app.main:app --reload
 All third-party services (LLMs, Embeddings, Vector DBs, Caches, Graphs) are accessed via abstract interfaces under `app/core/interfaces`. To swap providers, edit the environment variable (e.g. `LLM_PROVIDER="gemini"`) or implement a new provider inside `app/core/providers/`.
 
 ### Logging & Health Checks
-A structured log trace is included for all API calls. Endpoint `/api/v1/health` performs diagnostic checkups on PostgreSQL, Neo4j, and ChromaDB connectivity.
+Structured logging traces requests with Correlation IDs. System operations are monitored via standard FastAPI HTTP endpoints:
+- Liveness check: `GET /live`
+- Readiness check: `GET /ready`
+- Complete database diagnostics: `GET /health`
+- Version info: `GET /version`
+- Prometheus scraping target: `GET /metrics`
+
+---
+
+## Production Operations & Documentation
+
+Detailed deployment guides, configurations, and architecture diagrams can be found in the `docs/` directory:
+- [Docker Containerization Guide](file:///c:/Users/USER/Documents/AAA-Adaptive-AI-FilmAura/docs/DOCKER.md)
+- [Production Deployment Guide](file:///c:/Users/USER/Documents/AAA-Adaptive-AI-FilmAura/docs/DEPLOYMENT.md)
+- [System Infrastructure Design](file:///c:/Users/USER/Documents/AAA-Adaptive-AI-FilmAura/docs/INFRASTRUCTURE.md)
+

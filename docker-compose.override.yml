@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  web:
+    environment:
+      - APP_ENV=development
+      - DEBUG=True
+    volumes:
+      - ./backend:/workspace
+      - /workspace/venv
+      - /workspace/.pytest_cache
+
+  frontend:
+    environment:
+      - NODE_ENV=development

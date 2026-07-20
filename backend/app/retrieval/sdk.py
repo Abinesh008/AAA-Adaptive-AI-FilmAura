@@ -1,8 +1,10 @@
 from typing import Optional, Dict, Any
+import time
 from app.retrieval.orchestrator import orchestrator
 from app.retrieval.contract import FinalResponse
 from app.retrieval.session_store import session_store
 from app.retrieval.explanation import explanation_engine
+from app.core.metrics import RETRIEVAL_LATENCY
 
 class RetrievalClient:
     """
@@ -15,12 +17,17 @@ class RetrievalClient:
         profile: str = "balanced",
         experiment_id: Optional[str] = None
     ) -> FinalResponse:
-        return await orchestrator.execute_query(
-            query=query,
-            session_id=session_id,
-            profile=profile,
-            experiment_id=experiment_id
-        )
+        start_time = time.time()
+        try:
+            res = await orchestrator.execute_query(
+                query=query,
+                session_id=session_id,
+                profile=profile,
+                experiment_id=experiment_id
+            )
+            return res
+        finally:
+            RETRIEVAL_LATENCY.observe(time.time() - start_time)
 
     async def recommend(
         self,
@@ -31,11 +38,16 @@ class RetrievalClient:
         """
         Specialized recommendation profile query routing.
         """
-        return await orchestrator.execute_query(
-            query=query,
-            session_id=session_id,
-            profile=profile
-        )
+        start_time = time.time()
+        try:
+            res = await orchestrator.execute_query(
+                query=query,
+                session_id=session_id,
+                profile=profile
+            )
+            return res
+        finally:
+            RETRIEVAL_LATENCY.observe(time.time() - start_time)
 
     async def identify(
         self,
@@ -46,11 +58,16 @@ class RetrievalClient:
         """
         Specialized movie identification profile query routing.
         """
-        return await orchestrator.execute_query(
-            query=query,
-            session_id=session_id,
-            profile=profile
-        )
+        start_time = time.time()
+        try:
+            res = await orchestrator.execute_query(
+                query=query,
+                session_id=session_id,
+                profile=profile
+            )
+            return res
+        finally:
+            RETRIEVAL_LATENCY.observe(time.time() - start_time)
 
     def explain(self, trace_id: str) -> Dict[str, Any]:
         """

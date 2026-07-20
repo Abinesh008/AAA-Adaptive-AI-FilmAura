@@ -14,6 +14,11 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d filmaura"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - filmaura_network
 
@@ -32,6 +37,11 @@ services:
       - neo4j_logs:/logs
       - neo4j_import:/var/lib/neo4j/import
       - neo4j_plugins:/plugins
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "password", "RETURN 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
     networks:
       - filmaura_network
 
@@ -41,15 +51,37 @@ services:
     container_name: filmaura_chroma
     restart: always
     ports:
-      - "8000:8000"
+      - "8001:8000"
     volumes:
       - chroma_data:/chroma/data
     environment:
       - ANONYMIZED_TELEMETRY=False
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/v1/heartbeat || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - filmaura_network
 
-  # FastAPI Backend Application
+  # Caching and Rate Limiter (Redis - Optional fallback)
+  redis:
+    image: redis:7-alpine
+    container_name: filmaura_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - filmaura_network
+
+  # FastAPI Backend Application Gateway
   web:
     build:
       context: ./backend
@@ -57,7 +89,7 @@ services:
     container_name: filmaura_backend
     restart: always
     ports:
-      - "8080:8000"
+      - "8000:8000"
     env_file:
       - ./backend/.env
     environment:
@@ -74,11 +106,75 @@ services:
       - NEO4J_PASSWORD=${NEO4J_PASSWORD:-password}
       - CHROMA_HOST=chroma
       - CHROMA_PORT=8000
-      - CACHE_PROVIDER=memory
+      - CACHE_PROVIDER=redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     depends_on:
-      - db
-      - neo4j
-      - chroma
+      db:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      chroma:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - filmaura_network
+
+  # Next.js Frontend Application
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: filmaura_frontend
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks:
+      - filmaura_network
+
+  # Observability - Prometheus Collector
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: filmaura_prometheus
+    restart: always
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    depends_on:
+      - web
+    networks:
+      - filmaura_network
+
+  # Observability - Grafana Visualizations dashboard
+  grafana:
+    image: grafana/grafana:latest
+    container_name: filmaura_grafana
+    restart: always
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
+      - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/provisioning/dashboards/json:/etc/grafana/provisioning/dashboards/json
+    depends_on:
+      - prometheus
     networks:
       - filmaura_network
 
@@ -94,6 +190,8 @@ volumes:
   neo4j_plugins:
     driver: local
   chroma_data:
+    driver: local
+  redis_data:
     driver: local
 
 networks:

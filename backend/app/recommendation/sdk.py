@@ -1,4 +1,5 @@
 import asyncio
+import time
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from app.recommendation.interfaces.client import BaseRecommendationClient
@@ -15,6 +16,7 @@ from app.recommendation.telemetry import recommendation_telemetry
 from app.recommendation.feedback import feedback_pipeline
 from app.retrieval.query_trace import QueryTrace
 from app.core.logging import get_logger
+from app.core.metrics import CACHE_REQUESTS, RECOMMENDATION_LATENCY
 
 logger = get_logger("app.recommendation.sdk")
 
@@ -32,11 +34,13 @@ class RecommendationClient(BaseRecommendationClient):
         is_child_profile: bool = False,
         db: Session = None
     ) -> Dict[str, Any]:
+        start_rec_time = time.time()
         logger.info(f"SDK get_recommendations called for user: {user_id}")
         
         # 1. Check recommendation cache
         cached_result = await recommendation_cache.get_cached_recommendations(user_id)
         if cached_result is not None:
+            CACHE_REQUESTS.labels(status="hit").inc()
             # Reconstruct response envelope with fresh trace
             trace = QueryTrace(session_id=user_id)
             return {
@@ -45,6 +49,8 @@ class RecommendationClient(BaseRecommendationClient):
                 "recommendations": cached_result[:limit],
                 "trace_id": trace.trace_id
             }
+
+        CACHE_REQUESTS.labels(status="miss").inc()
 
         # Initialize Observability Trace
         trace = QueryTrace(session_id=user_id)
@@ -79,6 +85,7 @@ class RecommendationClient(BaseRecommendationClient):
                 
             trace.record_end("recommendation_total")
             await recommendation_cache.cache_recommendations(user_id, final_recs)
+            RECOMMENDATION_LATENCY.observe(time.time() - start_rec_time)
             return {
                 "user_id": user_id,
                 "experiment_group": "cold_start",
@@ -161,6 +168,7 @@ class RecommendationClient(BaseRecommendationClient):
         # 12. Save to cache
         await recommendation_cache.cache_recommendations(user_id, final_recs)
 
+        RECOMMENDATION_LATENCY.observe(time.time() - start_rec_time)
         return {
             "user_id": user_id,
             "experiment_group": exp_group,

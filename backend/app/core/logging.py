@@ -1,6 +1,7 @@
 import os
 import logging
 import sys
+import json
 from logging.handlers import RotatingFileHandler
 from app.core.config import settings
 
@@ -15,6 +16,22 @@ DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 formatter = logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT)
 
+class JsonFormatter(logging.Formatter):
+    def format(self, record):
+        log_data = {
+            "timestamp": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "file": record.filename,
+            "line": record.lineno,
+        }
+        if hasattr(record, "request_id"):
+            log_data["request_id"] = record.request_id
+        if record.exc_info:
+            log_data["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_data)
+
 def setup_logging():
     # Root logger
     root_logger = logging.getLogger()
@@ -26,9 +43,12 @@ def setup_logging():
     log_level = logging.DEBUG if settings.DEBUG else logging.INFO
     root_logger.setLevel(log_level)
 
+    # Select formatter based on environment profile
+    active_formatter = JsonFormatter(datefmt=DATE_FORMAT) if settings.APP_ENV == "production" else formatter
+
     # Console Handler
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(formatter)
+    console_handler.setFormatter(active_formatter)
     console_handler.setLevel(log_level)
     root_logger.addHandler(console_handler)
 
@@ -39,7 +59,7 @@ def setup_logging():
         backupCount=5,
         encoding="utf-8"
     )
-    file_handler.setFormatter(formatter)
+    file_handler.setFormatter(active_formatter)
     file_handler.setLevel(logging.INFO)  # Always log INFO and above to file
     root_logger.addHandler(file_handler)
 

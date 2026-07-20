@@ -13,7 +13,9 @@ try:
         settings.SQLALCHEMY_DATABASE_URI,
         pool_pre_ping=True,  # Test connections before executing queries
         pool_size=10,
-        max_overflow=20
+        max_overflow=20,
+        pool_recycle=3600,   # Recycle connections after 1 hour
+        pool_timeout=30      # Timeout waiting for pool connection
     )
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 except Exception as e:
