@@ -2,16 +2,18 @@ from sqlalchemy.orm import Session
 from typing import Dict, List, Any
 from app.models.movie import Movie
 from app.schemas.ontology import MovieOntologyInput, CastSchema, CrewSchema, SceneSchema, DialogueSchema, MusicSchema, AwardSchema, ReviewSchema
-from app.services.graph_service import GraphService
-from app.services.vector_service import VectorService
+from app.services.graph import GraphService
+from app.services.vector import VectorService
 from app.core.interfaces.vector import BaseVectorStore
 from app.core.interfaces.embedding import BaseEmbeddingProvider
 from app.core.interfaces.graph import BaseKnowledgeGraph
-from app.core.logging import get_logger
+from app.services.base import BaseService
 
-logger = get_logger("app.services.reconciliation")
-
-class ReconciliationService:
+class ReconciliationService(BaseService):
+    """
+    Orchestrates consistency audits and synchronization runs across Postgres,
+    Neo4j, and ChromaDB.
+    """
     def __init__(
         self,
         db: Session,
@@ -19,6 +21,7 @@ class ReconciliationService:
         vector_store: BaseVectorStore,
         embedding_provider: BaseEmbeddingProvider
     ):
+        super().__init__()
         self.db = db
         self.graph_db = graph_db
         self.vector_store = vector_store
@@ -31,7 +34,7 @@ class ReconciliationService:
         Verify consistency of all movies across Postgres, Neo4j, and ChromaDB,
         and automatically repair any missing elements.
         """
-        logger.info("Starting background reconciliation database check...")
+        self.logger.info("Starting background reconciliation database check...")
         
         movies = self.db.query(Movie).all()
         checked_count = 0
@@ -52,11 +55,10 @@ class ReconciliationService:
                     needs_repair = True
                     reasons.append("Neo4j node missing")
             except Exception as e:
-                logger.error(f"Reconciliation error checking Neo4j for {m.title}: {e}")
+                self.logger.error(f"Reconciliation error checking Neo4j for {m.title}: {e}")
                 
             # 2. Check ChromaDB presence
             try:
-                # We check the movie_overviews collection count for this movie
                 if hasattr(self.vector_store, "client"):
                     collection = self.vector_store.client.get_collection("movie_overviews")
                     res = collection.get(where={"movie_id": m.tmdb_id})
@@ -65,18 +67,18 @@ class ReconciliationService:
                         needs_repair = True
                         reasons.append("ChromaDB vectors missing")
             except Exception as e:
-                logger.error(f"Reconciliation error checking ChromaDB for {m.title}: {e}")
+                self.logger.error(f"Reconciliation error checking ChromaDB for {m.title}: {e}")
                 
             if needs_repair:
-                logger.info(f"Reconciliation: Movie '{m.title}' (ID: {m.tmdb_id}) is INCONSISTENT. Reasons: {', '.join(reasons)}. Repairing...")
+                self.logger.info(f"Reconciliation: Movie '{m.title}' (ID: {m.tmdb_id}) is INCONSISTENT. Reasons: {', '.join(reasons)}. Repairing...")
                 try:
                     self.repair_movie(m)
                     repaired_count += 1
                     repaired_movies.append({"title": m.title, "tmdb_id": m.tmdb_id, "reasons": reasons})
                 except Exception as e:
-                    logger.exception(f"Reconciliation failed to repair movie '{m.title}': {e}")
+                    self.logger.exception(f"Reconciliation failed to repair movie '{m.title}': {e}")
                     
-        logger.info(f"Reconciliation check complete. Checked: {checked_count}, Repaired: {repaired_count}")
+        self.logger.info(f"Reconciliation check complete. Checked: {checked_count}, Repaired: {repaired_count}")
         return {
             "status": "success",
             "checked_count": checked_count,
@@ -105,13 +107,12 @@ class ReconciliationService:
                     collection = self.vector_store._get_collection(col)
                     collection.delete(where={"movie_id": movie_id})
             except Exception as e:
-                logger.warning(f"Could not clear Chroma collection '{col}' for ID {movie_id}: {e}")
+                self.logger.warning(f"Could not clear Chroma collection '{col}' for ID {movie_id}: {e}")
 
     def map_db_to_input(self, db_movie: Movie) -> MovieOntologyInput:
         """
         Map a PostgreSQL Movie database model back to a MovieOntologyInput Pydantic model.
         """
-        # Formulate scenes list
         scenes_list = []
         for s in db_movie.scenes:
             dialogues_list = []
@@ -223,7 +224,6 @@ class ReconciliationService:
             twists=[t.description for t in db_movie.twists],
             conflicts=[co.description for co in db_movie.conflicts],
             subplots=[sb.description for sb in db_movie.subplots],
-            # Metadata
             confidence_score=db_movie.confidence_score,
             generated_by=db_movie.generated_by,
             generated_at=db_movie.generated_at.isoformat() if db_movie.generated_at else None,

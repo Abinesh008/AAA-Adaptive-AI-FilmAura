@@ -1,0 +1,1 @@
+from app.services.recommendation.recommendation_service import RecommendationService

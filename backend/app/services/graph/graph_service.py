@@ -1,23 +1,22 @@
 from typing import List, Dict, Any, Tuple
+from datetime import datetime
 from app.core.interfaces.graph import BaseKnowledgeGraph
 from app.schemas.ontology import MovieOntologyInput
-from app.core.logging import get_logger
-from datetime import datetime
+from app.services.base import BaseService
 
-logger = get_logger("app.services.graph_service")
-
-class GraphService:
+class GraphService(BaseService):
     """
     Manages schemas, constraints, indices, and Cypher population operations for Neo4j.
     """
     def __init__(self, graph_db: BaseKnowledgeGraph):
+        super().__init__()
         self.db = graph_db
 
     def initialize_schema(self) -> None:
         """
         Create uniqueness constraints and indexes on startup to ensure graph integrity.
         """
-        logger.info("Initializing Neo4j Knowledge Graph schemas and constraints...")
+        self.logger.info("Initializing Neo4j Knowledge Graph schemas and constraints...")
         
         # Define constraints
         constraints = [
@@ -40,15 +39,15 @@ class GraphService:
         for cypher, desc in constraints:
             try:
                 self.db.execute_query(cypher)
-                logger.debug(f"Neo4j schema: {desc} initialized successfully")
+                self.logger.debug(f"Neo4j schema: {desc} initialized successfully")
             except Exception as e:
-                logger.warning(f"Failed to create constraint ({desc}): {e}")
+                self.logger.warning(f"Failed to create constraint ({desc}): {e}")
 
     def populate_movie(self, movie: MovieOntologyInput) -> None:
         """
         Populate a single movie and its entire ontology structure inside a Neo4j transaction.
         """
-        logger.info(f"Populating Neo4j Knowledge Graph for: '{movie.title}' (ID: {movie.tmdb_id})")
+        self.logger.info(f"Populating Neo4j Knowledge Graph for: '{movie.title}' (ID: {movie.tmdb_id})")
         
         queries: List[Tuple[str, Dict[str, Any]]] = []
         
@@ -94,8 +93,7 @@ class GraphService:
         }
         queries.append((movie_cypher, movie_params))
 
-        # Clear existing non-structural relations (like genres, keywords, themes, emotions, moods, streaming, studios) 
-        # to prevent ghost relations on updates
+        # Clear existing non-structural relations
         clear_cypher = (
             "MATCH (m:Movie {id: $tmdb_id}) "
             "OPTIONAL MATCH (m)-[r:BELONGS_TO_GENRE|HAS_KEYWORD|HAS_THEME|HAS_EMOTION|HAS_MOOD|PRODUCED_BY|AVAILABLE_ON|PART_OF_FRANCHISE|HAS_MEMORY_CUE|HAS_VISUAL_CUE]->() "
@@ -183,7 +181,6 @@ class GraphService:
             queries.append((franchise_cypher, {"tmdb_id": movie.tmdb_id, "franchise_name": movie.franchise}))
 
         # 10. Link Cast (Actors) with character traits
-        # Clean existing ACTED_IN relationships for this movie to prevent duplication/ghosts
         queries.append((
             "MATCH (m:Movie {id: $tmdb_id})-[r:ACTED_IN]->() DELETE r",
             {"tmdb_id": movie.tmdb_id}
@@ -209,7 +206,6 @@ class GraphService:
             }))
 
         # 11. Link Crew (Directors, Writers, Composers, etc.)
-        # Clean existing crew relationships for this movie
         queries.append((
             "MATCH (m:Movie {id: $tmdb_id})-[r:DIRECTED|PRODUCED|WROTE|COMPOSED]->() DELETE r",
             {"tmdb_id": movie.tmdb_id}
@@ -226,7 +222,6 @@ class GraphService:
             elif "composer" in job_lower or "music" in job_lower:
                 rel_type = "COMPOSED"
             else:
-                # Default to fallback role relation
                 rel_type = "HAS_CREW"
                 
             crew_cypher = (
@@ -262,7 +257,6 @@ class GraphService:
             queries.append((cue_cypher, {"tmdb_id": movie.tmdb_id, "desc": cue}))
 
         # 14. Link Scenes, Objects, Symbols, and dialogues (Idempotent updates)
-        # Clear existing scene nodes and dialogues linked to this movie to prevent duplication
         clear_scenes_cypher = (
             "MATCH (m:Movie {id: $tmdb_id})-[:HAS_SCENE]->(s:Scene) "
             "OPTIONAL MATCH (s)-[:HAS_DIALOGUE]->(d:Dialogue) "
@@ -347,7 +341,7 @@ class GraphService:
                     "subtext": d.subtext or ""
                 }))
 
-        # 15. Contextual Elements (Locations and Historical periods)
+        # 15. Contextual Elements
         for loc in movie.locations:
             loc_cypher = (
                 "MATCH (m:Movie {id: $tmdb_id}) "
@@ -366,20 +360,18 @@ class GraphService:
 
         # Run transaction
         self.db.run_transaction(queries)
-        logger.info(f"Base graph transaction committed successfully for '{movie.title}'")
+        self.logger.info(f"Base graph transaction committed successfully for '{movie.title}'")
 
         # 16. Post Ingestion Similarity Linkages
         self._populate_similarity_linkages(movie.tmdb_id)
 
     def _populate_similarity_linkages(self, movie_id: str) -> None:
         """
-        Dynamically run queries to build SIMILAR_THEME, SIMILAR_MOOD, and SIMILAR_EMOTION links
-        between the updated movie node and other existing movie nodes.
+        Dynamically run queries to build SIMILAR_THEME, SIMILAR_MOOD, and SIMILAR_EMOTION links.
         """
-        logger.info(f"Recalculating similarity linkages for Movie ID {movie_id}...")
+        self.logger.info(f"Recalculating similarity linkages for Movie ID {movie_id}...")
         
         queries = [
-            # Link similar themes (movies sharing 2+ themes)
             ("""
             MATCH (m1:Movie {id: $movie_id})-[:HAS_THEME]->(t:Theme)<-[:HAS_THEME]-(m2:Movie)
             WHERE m1 <> m2
@@ -389,7 +381,6 @@ class GraphService:
             SET r.shared_themes_count = shared_count
             """, {"movie_id": movie_id}),
             
-            # Link similar moods (movies sharing 2+ moods)
             ("""
             MATCH (m1:Movie {id: $movie_id})-[:HAS_MOOD]->(mo:Mood)<-[:HAS_MOOD]-(m2:Movie)
             WHERE m1 <> m2
@@ -399,7 +390,6 @@ class GraphService:
             SET r.shared_moods_count = shared_count
             """, {"movie_id": movie_id}),
             
-            # Link similar emotions (movies sharing 2+ emotions)
             ("""
             MATCH (m1:Movie {id: $movie_id})-[:HAS_EMOTION]->(e:Emotion)<-[:HAS_EMOTION]-(m2:Movie)
             WHERE m1 <> m2
@@ -414,4 +404,4 @@ class GraphService:
             try:
                 self.db.execute_query(cypher, params)
             except Exception as e:
-                logger.warning(f"Failed to generate similarity relationship: {e}")
+                self.logger.warning(f"Failed to generate similarity relationship: {e}")

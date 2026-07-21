@@ -1,4 +1,5 @@
-from typing import Generator
+from typing import Generator, TYPE_CHECKING
+from fastapi import Depends
 from sqlalchemy.orm import Session
 from app.database.session import get_db
 
@@ -110,3 +111,37 @@ def get_cache_manager() -> BaseCacheManager:
             logger.warning(f"Unknown cache provider '{provider_name}'. Falling back to InMemoryCacheManager.")
             _cache_manager = InMemoryCacheManager()
     return _cache_manager
+
+# Service Dependency Providers
+if TYPE_CHECKING:
+    from app.services.agent.agent_service import AgentService
+    from app.services.recommendation.recommendation_service import RecommendationService
+    from app.services.retrieval.retrieval_service import RetrievalService
+    from app.services.ingestion.ingestion_service import IngestionService
+    from app.services.reconciliation.reconciliation import ReconciliationService
+
+def get_agent_service() -> AgentService:
+    from app.services.agent.agent_service import AgentService
+    return AgentService()
+
+def get_recommendation_service() -> RecommendationService:
+    from app.services.recommendation.recommendation_service import RecommendationService
+    return RecommendationService()
+
+def get_retrieval_service() -> RetrievalService:
+    from app.services.retrieval.retrieval_service import RetrievalService
+    return RetrievalService()
+
+def get_ingestion_service() -> IngestionService:
+    from app.services.ingestion.ingestion_service import IngestionService
+    return IngestionService()
+
+def get_reconciliation_service(
+    db: Session = Depends(get_db),
+    graph: BaseKnowledgeGraph = Depends(get_knowledge_graph),
+    vector: BaseVectorStore = Depends(get_vector_store),
+    embedding: BaseEmbeddingProvider = Depends(get_embedding_provider)
+) -> ReconciliationService:
+    from app.services.reconciliation.reconciliation import ReconciliationService
+    return ReconciliationService(db, graph, vector, embedding)
+

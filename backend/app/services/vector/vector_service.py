@@ -3,16 +3,15 @@ from datetime import datetime, timezone
 from app.core.interfaces.vector import BaseVectorStore
 from app.core.interfaces.embedding import BaseEmbeddingProvider
 from app.schemas.ontology import MovieOntologyInput
-from app.core.logging import get_logger
+from app.services.base import BaseService
 
-logger = get_logger("app.services.vector_service")
-
-class VectorService:
+class VectorService(BaseService):
     """
     Handles semantic chunk generation, metadata formatting, embedding generation,
     and storage across multiple target collections inside ChromaDB.
     """
     def __init__(self, vector_store: BaseVectorStore, embedding_provider: BaseEmbeddingProvider):
+        super().__init__()
         self.store = vector_store
         self.embedding = embedding_provider
 
@@ -21,27 +20,23 @@ class VectorService:
         Generate search chunks for a movie across multiple collections, embed them,
         and index them into ChromaDB.
         """
-        logger.info(f"Populating ChromaDB Vector indexes for: '{movie.title}' (ID: {movie.tmdb_id})")
+        self.logger.info(f"Populating ChromaDB Vector indexes for: '{movie.title}' (ID: {movie.tmdb_id})")
         
         timestamp_str = datetime.now(timezone.utc).isoformat()
         
-        # Base metadata shared by all collections (includes embedding versioning)
         base_meta = {
             "movie_id": movie.tmdb_id,
             "title": movie.title,
             "release_year": movie.release_year,
             "source_information": "tmdb_ingestion",
             "timestamp": timestamp_str,
-            # Embedding versioning metadata
             "embedding_model": self.embedding.model_name,
             "embedding_version": self.embedding.version,
             "source_provider": self.embedding.provider_name,
             "generated_at": timestamp_str
         }
 
-        # ---------------------------------------------------------
         # 1. Collection: movie_overviews
-        # ---------------------------------------------------------
         overview_text = (
             f"Title: {movie.title}\n"
             f"Year: {movie.release_year}\n"
@@ -59,9 +54,7 @@ class VectorService:
         }
         self._embed_and_index([overview_text], [ov_meta], [f"{movie.tmdb_id}_overview"], "movie_overviews")
 
-        # ---------------------------------------------------------
         # 2. Collection: characters
-        # ---------------------------------------------------------
         char_texts = []
         char_metas = []
         char_ids = []
@@ -93,9 +86,7 @@ class VectorService:
         if char_texts:
             self._embed_and_index(char_texts, char_metas, char_ids, "characters")
 
-        # ---------------------------------------------------------
         # 3. Collection: scenes
-        # ---------------------------------------------------------
         scene_texts = []
         scene_metas = []
         scene_ids = []
@@ -126,9 +117,7 @@ class VectorService:
         if scene_texts:
             self._embed_and_index(scene_texts, scene_metas, scene_ids, "scenes")
 
-        # ---------------------------------------------------------
         # 4. Collection: dialogues
-        # ---------------------------------------------------------
         dial_texts = []
         dial_metas = []
         dial_ids = []
@@ -162,9 +151,7 @@ class VectorService:
         if dial_texts:
             self._embed_and_index(dial_texts, dial_metas, dial_ids, "dialogues")
 
-        # ---------------------------------------------------------
         # 5. Collection: themes
-        # ---------------------------------------------------------
         theme_texts = []
         theme_metas = []
         theme_ids = []
@@ -187,9 +174,7 @@ class VectorService:
         if theme_texts:
             self._embed_and_index(theme_texts, theme_metas, theme_ids, "themes")
 
-        # ---------------------------------------------------------
         # 6. Collection: memory_cues
-        # ---------------------------------------------------------
         cue_texts = []
         cue_metas = []
         cue_ids = []
@@ -211,9 +196,7 @@ class VectorService:
         if cue_texts:
             self._embed_and_index(cue_texts, cue_metas, cue_ids, "memory_cues")
 
-        # ---------------------------------------------------------
         # 7. Collection: visual_cues
-        # ---------------------------------------------------------
         vis_texts = []
         vis_metas = []
         vis_ids = []
@@ -239,10 +222,10 @@ class VectorService:
         """
         Private helper to generate embeddings and index into a specific Chroma collection.
         """
-        logger.info(f"Generating vector embeddings for {len(texts)} chunks in '{collection_name}'...")
+        self.logger.info(f"Generating vector embeddings for {len(texts)} chunks in '{collection_name}'...")
         embeddings = self.embedding.embed_documents(texts)
         
-        logger.debug(f"Writing vectors into collection '{collection_name}'...")
+        self.logger.debug(f"Writing vectors into collection '{collection_name}'...")
         self.store.add_documents(
             texts=texts,
             embeddings=embeddings,

@@ -19,14 +19,12 @@ class ReindexRequest(BaseModel):
 def trigger_reindex(
     payload: Optional[ReindexRequest] = None,
     background_tasks: BackgroundTasks = None,
-    db: Session = Depends(deps.get_db),
     graph_db = Depends(deps.get_knowledge_graph),
     vector_store = Depends(deps.get_vector_store),
     embedding = Depends(deps.get_embedding_provider)
 ):
     """
-    Rebuilds Neo4j Graph nodes/links and ChromaDB vectors using existing PostgreSQL records
-    without downloading movie data again.
+    Rebuilds Neo4j Graph nodes/links and ChromaDB vectors using existing PostgreSQL records.
     """
     movie_ids = payload.movie_ids if payload else None
     
@@ -80,7 +78,7 @@ def delete_movie(
     db.commit()
     logger.info(f"Deleted movie '{title}' from PostgreSQL (cascading complete).")
     
-    # 3. Delete from Neo4j (detach delete)
+    # 3. Delete from Neo4j
     try:
         graph_db.execute_query("MATCH (m:Movie {id: $movie_id}) DETACH DELETE m", {"movie_id": movie_id})
         
@@ -115,7 +113,6 @@ def delete_movie(
 @router.post("/reconcile")
 def trigger_reconciliation(
     background_tasks: BackgroundTasks,
-    db: Session = Depends(deps.get_db),
     graph_db = Depends(deps.get_knowledge_graph),
     vector_store = Depends(deps.get_vector_store),
     embedding = Depends(deps.get_embedding_provider)

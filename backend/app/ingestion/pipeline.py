@@ -7,8 +7,8 @@ from app.ingestion.validation import validate_movie_ontology
 from app.ingestion.enrichment import MovieEnricher
 from app.api import deps
 from app.models.movie import *
-from app.services.graph_service import GraphService
-from app.services.vector_service import VectorService
+from app.services.graph import GraphService
+from app.services.vector import VectorService
 from app.core.interfaces.vector import BaseVectorStore
 from app.core.interfaces.embedding import BaseEmbeddingProvider
 from app.core.interfaces.graph import BaseKnowledgeGraph

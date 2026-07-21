@@ -1,8 +1,7 @@
-from fastapi import APIRouter, HTTPException, Query, Body
+from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import Optional, Dict, Any
-from app.retrieval.sdk import retrieval_client
-from app.retrieval.contract import FinalResponse
-from app.retrieval.disambiguation import ambiguity_resolver
+from app.api import deps
+from app.services.retrieval import RetrievalService
 
 router = APIRouter()
 
@@ -11,29 +10,17 @@ async def search_query(
     query: str = Query(..., description="The user query string"),
     session_id: Optional[str] = Query(None, description="Optional conversation session ID"),
     profile: str = Query("balanced", description="Fast, Balanced, Quality execution profiles"),
-    experiment_id: Optional[str] = Query(None, description="Optional A/B testing experiment ID")
+    experiment_id: Optional[str] = Query(None, description="Optional A/B testing experiment ID"),
+    service: RetrievalService = Depends(deps.get_retrieval_service)
 ):
-    # Step 1: Check for Ambiguity before executing retrieval
-    disambig = ambiguity_resolver.resolve_ambiguity(query)
-    if disambig.is_ambiguous:
-        return {
-            "status": "ambiguous",
-            "disambiguation": disambig.dict(),
-            "answer": "Your query is ambiguous. Please select one of the clarification candidates.",
-            "movies": []
-        }
-        
     try:
-        response = await retrieval_client.search(
+        response = await service.search_query(
             query=query,
             session_id=session_id,
             profile=profile,
             experiment_id=experiment_id
         )
-        return {
-            "status": "success",
-            "data": response.dict()
-        }
+        return response
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Retrieval execution failed: {str(e)}")
 
@@ -41,11 +28,12 @@ async def search_query(
 async def recommend_query(
     query: str = Query(...),
     session_id: Optional[str] = Query(None),
-    profile: str = Query("balanced")
+    profile: str = Query("balanced"),
+    service: RetrievalService = Depends(deps.get_retrieval_service)
 ):
     try:
-        response = await retrieval_client.recommend(query, session_id, profile)
-        return {"status": "success", "data": response.dict()}
+        response = await service.recommend_query(query, session_id, profile)
+        return response
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -53,17 +41,21 @@ async def recommend_query(
 async def identify_query(
     query: str = Query(...),
     session_id: Optional[str] = Query(None),
-    profile: str = Query("balanced")
+    profile: str = Query("balanced"),
+    service: RetrievalService = Depends(deps.get_retrieval_service)
 ):
     try:
-        response = await retrieval_client.identify(query, session_id, profile)
-        return {"status": "success", "data": response.dict()}
+        response = await service.identify_query(query, session_id, profile)
+        return response
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/explain/{trace_id}", response_model=Dict[str, Any])
-def explain_query(trace_id: str):
-    explanation = retrieval_client.explain(trace_id)
+def explain_query(
+    trace_id: str,
+    service: RetrievalService = Depends(deps.get_retrieval_service)
+):
+    explanation = service.explain_query(trace_id)
     if "error" in explanation:
         raise HTTPException(status_code=404, detail=explanation["error"])
     return {"status": "success", "data": explanation}
