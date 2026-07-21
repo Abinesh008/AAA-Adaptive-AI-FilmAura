@@ -2,8 +2,8 @@ from typing import List, Dict, Any
 from app.database.session import SessionLocal
 from app.models.movie import Movie
 from app.retrieval.interfaces.plugin import BaseRetrievalPlugin
-from app.retrieval.contract import ExecutionStep, RetrievalResult, ProvenanceChain
-from app.retrieval.query_trace import QueryTrace
+from app.retrieval.contracts.contract import ExecutionStep, RetrievalResult, ProvenanceChain
+from app.retrieval.query.query_trace import QueryTrace
 
 class PostgresRetrievalPlugin(BaseRetrievalPlugin):
     """

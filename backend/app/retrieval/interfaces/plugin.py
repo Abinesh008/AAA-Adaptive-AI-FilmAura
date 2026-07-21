@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any
-from app.retrieval.contract import ExecutionStep, RetrievalResult
-from app.retrieval.query_trace import QueryTrace
+from app.retrieval.contracts.contract import ExecutionStep, RetrievalResult
+from app.retrieval.query.query_trace import QueryTrace
 
 class BaseRetrievalPlugin(ABC):
     """

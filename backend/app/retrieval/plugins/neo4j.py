@@ -1,8 +1,8 @@
 from typing import List, Dict, Any
 from app.api.deps import get_knowledge_graph
 from app.retrieval.interfaces.plugin import BaseRetrievalPlugin
-from app.retrieval.contract import ExecutionStep, RetrievalResult, ProvenanceChain
-from app.retrieval.query_trace import QueryTrace
+from app.retrieval.contracts.contract import ExecutionStep, RetrievalResult, ProvenanceChain
+from app.retrieval.query.query_trace import QueryTrace
 from app.core.logging import get_logger
 
 logger = get_logger("app.retrieval.plugins.neo4j")

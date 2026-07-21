@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional
-from app.retrieval.contract import RetrievalResult, QueryIntent
+from app.retrieval.contracts.contract import RetrievalResult, QueryIntent
 
 class BaseMemoryProvider(ABC):
     """
