@@ -1,6 +1,6 @@
 import pkgutil
 import importlib
-from typing import Dict, Any, List, Type
+from typing import Dict, Any, List, Type, Optional
 from app.core.logging import get_logger
 from app.retrieval.interfaces.plugin import BaseRetrievalPlugin
 
@@ -80,7 +80,6 @@ class CapabilityRegistry:
             }
         return manifests
 
-from typing import Optional
 pipeline_registry = PipelineRegistry()
 capability_registry = CapabilityRegistry()
 

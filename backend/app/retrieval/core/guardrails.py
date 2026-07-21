@@ -1,5 +1,5 @@
 import re
-from typing import Dict, Any, Tuple
+from typing import List, Tuple, Optional
 from app.core.logging import get_logger
 from app.retrieval.query.query_trace import QueryTrace
 
