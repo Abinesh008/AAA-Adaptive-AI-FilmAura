@@ -13,7 +13,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    
+
     services:
       postgres:
         image: postgres:16-alpine
@@ -30,34 +30,35 @@ jobs:
           --health-retries 5
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
-        cache: 'pip'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r backend/requirements.txt pytest httpx pytest-asyncio
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt pytest httpx pytest-asyncio
 
-    - name: Run code formatting check
-      run: |
-        # Optional check: format check with ruff/black if present, otherwise syntax compilation check
-        python -m compileall backend/app
+      - name: Run code formatting check
+        run: |
+          # Optional check: format check with ruff/black if present, otherwise syntax compilation check
+          python -m compileall backend/app
 
-    - name: Run tests
-      env:
-        POSTGRES_SERVER: localhost
-        POSTGRES_PORT: 5432
-        POSTGRES_USER: postgres
-        POSTGRES_PASSWORD: password
-        POSTGRES_DB: filmaura
-        NEO4J_URI: bolt://localhost:7687
-        CHROMA_HOST: localhost
-        APP_ENV: testing
-      run: |
-        cd backend
-        pytest
+      - name: Run tests
+        working-directory: backend
+        env:
+          POSTGRES_SERVER: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: filmaura
+          NEO4J_URI: bolt://localhost:7687
+          CHROMA_HOST: localhost
+          APP_ENV: testing
+          PYTHONPATH: .
+        run: |
+          python -m pytest
