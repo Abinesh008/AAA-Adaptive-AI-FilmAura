@@ -1,6 +1,12 @@
 import asyncio
 import time
-from app.scratch.golden_dataset import GOLDEN_DATASET
+import os
+import sys
+
+# Adjust Python path to allow running research utilities from backend folder
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from research.golden_dataset import GOLDEN_DATASET
 from app.retrieval.sdk import retrieval_client
 from app.retrieval.evaluation import evaluator
 from app.retrieval.registry import discover_plugins
