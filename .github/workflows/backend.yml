@@ -59,6 +59,6 @@ jobs:
           NEO4J_URI: bolt://localhost:7687
           CHROMA_HOST: localhost
           APP_ENV: testing
-          PYTHONPATH: .
+          PYTHONPATH: ${{ github.workspace }}/backend
         run: |
           python -m pytest
