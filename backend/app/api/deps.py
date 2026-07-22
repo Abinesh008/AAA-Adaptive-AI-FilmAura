@@ -1,3 +1,4 @@
+from __future__ import annotations
 from typing import Generator, TYPE_CHECKING
 from fastapi import Depends
 from sqlalchemy.orm import Session
