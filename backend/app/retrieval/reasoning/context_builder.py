@@ -1,4 +1,4 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple, Callable
 from app.core.config import settings
 from app.retrieval.contracts.contract import CandidateMovie, ReasoningContext
 from app.core.logging import get_logger
@@ -77,6 +77,5 @@ class ContextBuilder:
                 
         return "".join(compressed_blocks)
 
-from typing import Tuple, Callable
 # Export singleton instance
 context_builder = ContextBuilder()
