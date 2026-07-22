@@ -1,4 +1,4 @@
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from pydantic import BaseModel, Field
 import threading
 from app.core.logging import get_logger
@@ -92,5 +92,4 @@ class ContextMemoryEngine:
 
         return query, {}
 
-from typing import Tuple
 context_memory_engine = ContextMemoryEngine()
