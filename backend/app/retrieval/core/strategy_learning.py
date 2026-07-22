@@ -1,5 +1,5 @@
 import threading
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from pydantic import BaseModel, Field
 from app.core.logging import get_logger
 
@@ -83,5 +83,4 @@ class StrategyLearningEngine:
                     result[qtype][strat] = metrics.dict()
             return result
 
-from typing import Optional
 strategy_learning_engine = StrategyLearningEngine()
