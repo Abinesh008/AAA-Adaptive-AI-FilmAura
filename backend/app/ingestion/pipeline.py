@@ -5,6 +5,7 @@ from app.ingestion.base import BaseMovieDataProvider
 from app.ingestion.cleaning import clean_movie_data
 from app.ingestion.validation import validate_movie_ontology
 from app.ingestion.enrichment import MovieEnricher
+from app.schemas.ontology import MovieOntologyInput
 from app.api import deps
 from app.models.movie import *
 from app.services.graph import GraphService
@@ -16,113 +17,6 @@ from app.core.logging import get_logger
 
 logger = get_logger("app.ingestion.pipeline")
 
-class MovieIngestionPipeline:
-    """
-    Core coordinator orchestrating movie seeding across PostgreSQL, Neo4j, and ChromaDB.
-    Consumes the abstract BaseMovieDataProvider interface.
-    """
-    def __init__(
-        self,
-        db: Session,
-        graph_db: BaseKnowledgeGraph,
-        vector_store: BaseVectorStore,
-        embedding_provider: BaseEmbeddingProvider,
-        provider: BaseMovieDataProvider
-    ):
-        self.db = db
-        self.provider = provider
-        self.graph_db = graph_db
-        self.vector_store = vector_store
-        self.embedding_provider = embedding_provider
-        
-        # Initialize sub-services
-        self.graph_service = GraphService(graph_db)
-        self.vector_service = VectorService(vector_store, embedding_provider)
-        
-        # Initialize graph constraints/schemas
-        try:
-            self.graph_service.initialize_schema()
-        except Exception as e:
-            logger.warning(f"Failed to pre-initialize Neo4j schemas: {e}")
-
-    def ingest_movie_by_id(self, movie_id: str, run_enrichment: bool = True) -> Movie:
-        """
-        Trigger complete idempotent ingestion cycle for a single movie by external ID.
-        """
-        logger.info(f"==> Starting base ingestion cycle for movie ID: {movie_id}")
-        
-        # 1. Fetch raw data from provider
-        raw_movie_data = self.provider.fetch_movie_by_id(movie_id)
-        
-        # 2. Clean and normalize payload data
-        cleaned_movie = clean_movie_data(raw_movie_data)
-        
-        # 3. Validate the movie payload before DB insertions
-        validation_errors = validate_movie_ontology(cleaned_movie)
-        if validation_errors:
-            logger.warning(f"Validation warnings/errors for ID {movie_id}: {'; '.join(validation_errors)}")
-            # Filter fatal schema errors to block execution if critical
-            fatal_errors = [e for e in validation_errors if "Validation Error:" in e]
-            if fatal_errors:
-                raise ValueError(f"Ingestion aborted due to validation failures: {'; '.join(fatal_errors)}")
-
-        # 4. Write relational schema to PostgreSQL (idempotent check-and-update)
-        db_movie = self._save_to_postgresql(cleaned_movie)
-        
-        # 5. Populate Knowledge Graph in Neo4j (idempotent MERGE queries)
-        try:
-            self.graph_service.populate_movie(cleaned_movie)
-        except Exception as e:
-            logger.error(f"Failed to populate Neo4j graph for movie {cleaned_movie.title}: {e}")
-            
-        # 6. Populate Vector embeddings in ChromaDB (clear old vectors first)
-        try:
-            self._clear_chroma_vectors(cleaned_movie.tmdb_id)
-            self.vector_service.populate_movie(cleaned_movie)
-        except Exception as e:
-            logger.error(f"Failed to populate ChromaDB vectors for movie {cleaned_movie.title}: {e}")
-            
-        logger.info(f"==> Base Ingestion complete for '{cleaned_movie.title}' (ID: {cleaned_movie.tmdb_id}). Movie is fully usable.")
-
-        # 7. Asynchronous/Background AI Enrichment
-        if run_enrichment:
-            self._run_asynchronous_enrichment(cleaned_movie)
-
-        return db_movie
-
-    def ingest_popular_movies(self, limit: int = 20, run_enrichment: bool = True) -> List[Movie]:
-        """
-        Ingest a batch of popular movies.
-        """
-        logger.info(f"==> Initiating batch popular movie ingestion (limit={limit})")
-        popular_movies = self.provider.fetch_popular_movies(limit=limit)
-        
-        ingested_movies = []
-        for index, movie_input in enumerate(popular_movies):
-            try:
-                logger.info(f"Ingesting batch movie {index + 1}/{len(popular_movies)}: '{movie_input.title}'")
-                db_movie = self.ingest_movie_by_id(movie_input.tmdb_id, run_enrichment=run_enrichment)
-                ingested_movies.append(db_movie)
-            except Exception as e:
-                logger.exception(f"Failed to ingest movie '{movie_input.title}' in batch: {e}")
-                
-        logger.info(f"==> Batch popular movie ingestion complete. Total ingested: {len(ingested_movies)}")
-        return ingested_movies
-
-    def _clear_chroma_vectors(self, movie_id: str) -> None:
-        """
-        Clears existing documents for a movie from all target collections in Chroma.
-        """
-        collections = ["movie_overviews", "characters", "scenes", "dialogues", "themes", "memory_cues", "visual_cues"]
-        for col in collections:
-            try:
-                # Retrieve the raw collection to utilize native where-clause deletion
-                if hasattr(self.vector_store, "_get_collection"):
-                    collection = self.vector_store._get_collection(col)
-                    collection.delete(where={"movie_id": movie_id})
-                    logger.debug(f"Cleared existing vectors for ID {movie_id} in collection '{col}'")
-            except Exception as e:
-                logger.warning(f"Could not clear Chroma collection '{col}' for ID {movie_id}: {e}")
 
 def _parse_dt(dt_val):
     if not dt_val:
@@ -134,6 +28,7 @@ def _parse_dt(dt_val):
     except Exception:
         return datetime.utcnow()
 
+
 class MovieIngestionPipeline:
     """
     Core coordinator orchestrating movie seeding across PostgreSQL, Neo4j, and ChromaDB.
@@ -152,11 +47,11 @@ class MovieIngestionPipeline:
         self.graph_db = graph_db
         self.vector_store = vector_store
         self.embedding_provider = embedding_provider
-        
+
         # Initialize sub-services
         self.graph_service = GraphService(graph_db)
         self.vector_service = VectorService(vector_store, embedding_provider)
-        
+
         # Initialize graph constraints/schemas
         try:
             self.graph_service.initialize_schema()
@@ -168,13 +63,13 @@ class MovieIngestionPipeline:
         Trigger complete idempotent ingestion cycle for a single movie by external ID.
         """
         logger.info(f"==> Starting base ingestion cycle for movie ID: {movie_id}")
-        
+
         # 1. Fetch raw data from provider
         raw_movie_data = self.provider.fetch_movie_by_id(movie_id)
-        
+
         # 2. Clean and normalize payload data
         cleaned_movie = clean_movie_data(raw_movie_data)
-        
+
         # 3. Validate the movie payload before DB insertions
         validation_errors = validate_movie_ontology(cleaned_movie)
         if validation_errors:
@@ -186,20 +81,20 @@ class MovieIngestionPipeline:
 
         # 4. Write relational schema to PostgreSQL (idempotent check-and-update)
         db_movie = self._save_to_postgresql(cleaned_movie)
-        
+
         # 5. Populate Knowledge Graph in Neo4j (idempotent MERGE queries)
         try:
             self.graph_service.populate_movie(cleaned_movie)
         except Exception as e:
             logger.error(f"Failed to populate Neo4j graph for movie {cleaned_movie.title}: {e}")
-            
+
         # 6. Populate Vector embeddings in ChromaDB (clear old vectors first)
         try:
             self._clear_chroma_vectors(cleaned_movie.tmdb_id)
             self.vector_service.populate_movie(cleaned_movie)
         except Exception as e:
             logger.error(f"Failed to populate ChromaDB vectors for movie {cleaned_movie.title}: {e}")
-            
+
         logger.info(f"==> Base Ingestion complete for '{cleaned_movie.title}' (ID: {cleaned_movie.tmdb_id}). Movie is fully usable.")
 
         # 7. Asynchronous/Background AI Enrichment
@@ -214,7 +109,7 @@ class MovieIngestionPipeline:
         """
         logger.info(f"==> Initiating batch popular movie ingestion (limit={limit})")
         popular_movies = self.provider.fetch_popular_movies(limit=limit)
-        
+
         ingested_movies = []
         for index, movie_input in enumerate(popular_movies):
             try:
@@ -223,7 +118,7 @@ class MovieIngestionPipeline:
                 ingested_movies.append(db_movie)
             except Exception as e:
                 logger.exception(f"Failed to ingest movie '{movie_input.title}' in batch: {e}")
-                
+
         logger.info(f"==> Batch popular movie ingestion complete. Total ingested: {len(ingested_movies)}")
         return ingested_movies
 
@@ -252,16 +147,16 @@ class MovieIngestionPipeline:
             llm = deps.get_llm_provider()
             enricher = MovieEnricher(llm)
             enriched_movie = enricher.enrich_movie(movie)
-            
+
             # Inject AI enrichment metadata
             gen_by = llm.provider_name if hasattr(llm, "provider_name") else "mock"
             gen_at = datetime.utcnow().isoformat()
-            
+
             enriched_movie.source = "llm"
             enriched_movie.confidence_score = 0.90
             enriched_movie.generated_by = gen_by
             enriched_movie.generated_at = gen_at
-            
+
             for scene in enriched_movie.scenes:
                 scene.source = "llm"
                 scene.confidence_score = 0.90
@@ -272,24 +167,24 @@ class MovieIngestionPipeline:
                     d.confidence_score = 0.90
                     d.generated_by = gen_by
                     d.generated_at = gen_at
-            
+
             for cast_member in enriched_movie.cast:
                 if cast_member.personality_traits or cast_member.motivations or cast_member.arc:
                     cast_member.source = "llm"
                     cast_member.confidence_score = 0.85
                     cast_member.generated_by = gen_by
                     cast_member.generated_at = gen_at
-            
+
             logger.info(f"Saving AI enriched attributes back into PostgreSQL for '{movie.title}'...")
             self._save_to_postgresql(enriched_movie)
-            
+
             logger.info(f"Saving AI enriched attributes back into Neo4j for '{movie.title}'...")
             self.graph_service.populate_movie(enriched_movie)
-            
+
             logger.info(f"Saving AI enriched attributes back into ChromaDB for '{movie.title}'...")
             self._clear_chroma_vectors(enriched_movie.tmdb_id)
             self.vector_service.populate_movie(enriched_movie)
-            
+
             logger.info(f"AI enrichment stage completed successfully for '{movie.title}'")
         except Exception as e:
             logger.error(f"AI enrichment stage failed for '{movie.title}': {e}. Movie remains fully active with base metadata.")
@@ -300,10 +195,10 @@ class MovieIngestionPipeline:
         Guarantees idempotence via upsert updates.
         """
         logger.info(f"Saving '{movie.title}' to PostgreSQL database...")
-        
+
         # Check if movie already exists
         db_movie = self.db.query(Movie).filter(Movie.tmdb_id == movie.tmdb_id).first()
-        
+
         # Parse release date
         release_date = None
         if movie.release_date:
@@ -381,13 +276,13 @@ class MovieIngestionPipeline:
             db_movie.ending_type = movie.ending_type
             db_movie.timeline = movie.timeline
             db_movie.last_synced_at = datetime.utcnow()
-            
+
             # Update metadata fields
             db_movie.confidence_score = movie.confidence_score
             db_movie.generated_by = movie.generated_by
             db_movie.generated_at = _parse_dt(movie.generated_at)
             db_movie.source = movie.source
-            
+
             # Clear child relational links to rewrite cleanly on sync updates
             self.db.query(MovieCast).filter(MovieCast.movie_id == db_movie.id).delete()
             self.db.query(MovieCrew).filter(MovieCrew.movie_id == db_movie.id).delete()
@@ -401,7 +296,7 @@ class MovieIngestionPipeline:
             self.db.query(MovieConflict).filter(MovieConflict.movie_id == db_movie.id).delete()
             self.db.query(MovieSubplot).filter(MovieSubplot.movie_id == db_movie.id).delete()
             self.db.query(MovieRelationship).filter((MovieRelationship.from_movie_id == db_movie.id) | (MovieRelationship.to_movie_id == db_movie.id)).delete()
-            
+
             db_movie.genres.clear()
             db_movie.keywords.clear()
             db_movie.studios.clear()
@@ -519,7 +414,7 @@ class MovieIngestionPipeline:
                 )
                 self.db.add(person)
                 self.db.flush()
-                
+
             cast_assoc = MovieCast(
                 movie_id=db_movie.id,
                 person_id=person.id,
@@ -550,7 +445,7 @@ class MovieIngestionPipeline:
                 )
                 self.db.add(person)
                 self.db.flush()
-                
+
             crew_assoc = MovieCrew(
                 movie_id=db_movie.id,
                 person_id=person.id,
@@ -576,7 +471,7 @@ class MovieIngestionPipeline:
             )
             self.db.add(scene_obj)
             self.db.flush()  # Populates scene_obj.id
-            
+
             # Map scene dialogues
             for d in scene.dialogues:
                 dialogue_obj = Dialogue(
@@ -608,7 +503,7 @@ class MovieIngestionPipeline:
                 cue_type = "camera"
             elif "symbol" in desc_lower:
                 cue_type = "symbolism"
-                
+
             vc_obj = VisualCue(
                 movie_id=db_movie.id,
                 description=vc,
@@ -668,7 +563,7 @@ class MovieIngestionPipeline:
         # 17. Map Narrative Extensions: twists, conflicts, subplots
         for twist in movie.twists:
             self.db.add(MovieTwist(
-                movie_id=db_movie.id, 
+                movie_id=db_movie.id,
                 description=twist,
                 confidence_score=movie.confidence_score,
                 generated_by=movie.generated_by,
@@ -677,7 +572,7 @@ class MovieIngestionPipeline:
             ))
         for conflict in movie.conflicts:
             self.db.add(MovieConflict(
-                movie_id=db_movie.id, 
+                movie_id=db_movie.id,
                 description=conflict,
                 confidence_score=movie.confidence_score,
                 generated_by=movie.generated_by,
@@ -686,7 +581,7 @@ class MovieIngestionPipeline:
             ))
         for subplot in movie.subplots:
             self.db.add(MovieSubplot(
-                movie_id=db_movie.id, 
+                movie_id=db_movie.id,
                 description=subplot,
                 confidence_score=movie.confidence_score,
                 generated_by=movie.generated_by,
@@ -704,7 +599,7 @@ class MovieIngestionPipeline:
                     relation_type="prequel"
                 )
                 self.db.add(rel)
-                
+
         for sequel_title in movie.sequels:
             seq_movie = self.db.query(Movie).filter(Movie.title == sequel_title).first()
             if seq_movie:
