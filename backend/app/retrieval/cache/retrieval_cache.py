@@ -1,11 +1,13 @@
 import hashlib
 import json
-from typing import Optional, Any
+import threading
+from typing import Optional, Any, Dict, Set, List
 from app.api.deps import get_cache_manager
 from app.retrieval.core.features import features
 from app.core.logging import get_logger
 
 logger = get_logger("app.retrieval.cache")
+
 
 class RetrievalCacheManager:
     """
@@ -23,7 +25,7 @@ class RetrievalCacheManager:
     async def get_cached_item(self, prefix: str, key_hash: str) -> Optional[Any]:
         if not features.is_enabled("cache"):
             return None
-            
+
         cache = get_cache_manager()
         full_key = f"retrieval:{prefix}:{key_hash}"
         try:
@@ -38,13 +40,13 @@ class RetrievalCacheManager:
     async def set_cached_item(self, prefix: str, key_hash: str, value: Any, ttl: int = 3600, linked_movie_ids: List[int] = None) -> None:
         if not features.is_enabled("cache"):
             return
-            
+
         cache = get_cache_manager()
         full_key = f"retrieval:{prefix}:{key_hash}"
         try:
             cache.set(full_key, json.dumps(value), expire=ttl)
             logger.info(f"Cached item under key: {full_key}")
-            
+
             # Map cached keys to movie IDs to support invalidations
             if linked_movie_ids:
                 with self._lock:
@@ -65,7 +67,7 @@ class RetrievalCacheManager:
             if movie_id in self._movie_to_keys:
                 keys_to_delete = list(self._movie_to_keys[movie_id])
                 del self._movie_to_keys[movie_id]
-                
+
         if keys_to_delete:
             logger.info(f"Invalidating {len(keys_to_delete)} cache keys linked to Movie ID {movie_id}")
             for key in keys_to_delete:
@@ -74,7 +76,6 @@ class RetrievalCacheManager:
                 except Exception as e:
                     logger.error(f"Failed to delete cache key {key}: {str(e)}")
 
-import threading
-from typing import Dict, Set, List
+
 # Export singleton cache manager
 retrieval_cache = RetrievalCacheManager()
